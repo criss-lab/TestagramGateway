@@ -4,6 +4,8 @@ import { Toaster } from 'sonner';
 import Sidebar from '@/components/layout/Sidebar';
 import TopBar from '@/components/layout/TopBar';
 import Dashboard from '@/pages/Dashboard';
+import HomePage from '@/pages/HomePage';
+import DiscoverPage from '@/pages/DiscoverPage';
 import Instances from '@/pages/Instances';
 import ImportFeed from '@/pages/ImportFeed';
 import ExportQueue from '@/pages/ExportQueue';
@@ -28,9 +30,11 @@ export default function App() {
           <Sidebar />
           <div className="flex-1 flex flex-col overflow-hidden min-w-0">
             <TopBar />
-            <main className="flex-1 overflow-y-auto p-6">
+            <main className="flex-1 overflow-y-auto">
               <Routes>
-                <Route path="/" element={<Dashboard />} />
+                <Route path="/" element={<HomePage />} />
+                <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/discover" element={<DiscoverPage />} />
                 <Route path="/instances" element={<Instances />} />
                 <Route path="/import" element={<ImportFeed />} />
                 <Route path="/export" element={<ExportQueue />} />
