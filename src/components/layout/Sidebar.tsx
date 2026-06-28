@@ -1,18 +1,36 @@
 import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, Globe, ArrowDownCircle, ArrowUpCircle, RefreshCw, Rss,
-  Activity,
+  Activity, BarChart2, Code2, Radio,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useDashboardStats } from '@/hooks/useDashboardStats';
 import logo from '@/assets/logo.png';
 
-const navItems = [
-  { to: '/',          icon: LayoutDashboard,  label: 'Dashboard',    end: true  },
-  { to: '/instances', icon: Globe,             label: 'Instances',    end: false },
-  { to: '/import',    icon: ArrowDownCircle,   label: 'Import Feed',  end: false },
-  { to: '/export',    icon: ArrowUpCircle,     label: 'Export Queue', end: false },
-  { to: '/sync',      icon: RefreshCw,         label: 'Sync Status',  end: false },
+const navGroups = [
+  {
+    label: 'Overview',
+    items: [
+      { to: '/',          icon: LayoutDashboard, label: 'Dashboard',   end: true  },
+      { to: '/instances', icon: Globe,            label: 'Instances',   end: false },
+      { to: '/timeline',  icon: Radio,            label: 'Timeline',    end: false },
+    ],
+  },
+  {
+    label: 'Federation',
+    items: [
+      { to: '/import',    icon: ArrowDownCircle,  label: 'Import Feed',  end: false },
+      { to: '/export',    icon: ArrowUpCircle,    label: 'Export Queue', end: false },
+      { to: '/sync',      icon: RefreshCw,        label: 'Sync Status',  end: false },
+    ],
+  },
+  {
+    label: 'Developer',
+    items: [
+      { to: '/inspector', icon: Code2,    label: 'AP Inspector', end: false },
+      { to: '/analytics', icon: BarChart2, label: 'Analytics',   end: false },
+    ],
+  },
 ];
 
 export default function Sidebar() {
@@ -32,39 +50,50 @@ export default function Sidebar() {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
-        <div className="text-[10px] uppercase tracking-widest text-muted-foreground/60 px-2 mb-3 font-mono">
-          Modules
-        </div>
-        {navItems.map(({ to, icon: Icon, label, end }) => (
-          <NavLink key={to} to={to} end={end}
-            className={({ isActive }) =>
-              cn('flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-all duration-150 group',
-                isActive
-                  ? 'bg-primary/10 text-primary border border-primary/20'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-muted border border-transparent')
-            }>
-            {({ isActive }) => (
-              <>
-                <Icon className={cn('w-4 h-4 flex-shrink-0', isActive ? 'text-primary' : 'group-hover:text-foreground')} />
-                <span className="font-medium flex-1">{label}</span>
-                {/* Badge for export queue failures */}
-                {to === '/export' && stats?.queueFailed ? (
-                  <span className="text-[10px] font-mono bg-red-400/15 text-red-400 border border-red-400/20 px-1.5 rounded">
-                    {stats.queueFailed}
-                  </span>
-                ) : isActive ? (
-                  <div className="w-1.5 h-1.5 rounded-full bg-primary" />
-                ) : null}
-              </>
-            )}
-          </NavLink>
+      <nav className="flex-1 px-3 py-4 space-y-4 overflow-y-auto">
+        {navGroups.map((group) => (
+          <div key={group.label}>
+            <div className="text-[10px] uppercase tracking-widest text-muted-foreground/50 px-2 mb-2 font-mono">
+              {group.label}
+            </div>
+            <div className="space-y-0.5">
+              {group.items.map(({ to, icon: Icon, label, end }) => (
+                <NavLink
+                  key={to}
+                  to={to}
+                  end={end}
+                  className={({ isActive }) =>
+                    cn(
+                      'flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-all duration-150 group',
+                      isActive
+                        ? 'bg-primary/10 text-primary border border-primary/20'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-muted border border-transparent'
+                    )
+                  }
+                >
+                  {({ isActive }) => (
+                    <>
+                      <Icon className={cn('w-4 h-4 flex-shrink-0', isActive ? 'text-primary' : 'group-hover:text-foreground')} />
+                      <span className="font-medium flex-1">{label}</span>
+                      {to === '/export' && stats?.queueFailed ? (
+                        <span className="text-[10px] font-mono bg-red-400/15 text-red-400 border border-red-400/20 px-1.5 rounded">
+                          {stats.queueFailed}
+                        </span>
+                      ) : isActive ? (
+                        <div className="w-1.5 h-1.5 rounded-full bg-primary" />
+                      ) : null}
+                    </>
+                  )}
+                </NavLink>
+              ))}
+            </div>
+          </div>
         ))}
       </nav>
 
       {/* Quick stats */}
       <div className="px-4 py-3 border-t border-border">
-        <div className="text-[10px] uppercase tracking-widest text-muted-foreground/60 mb-2 font-mono">Stats</div>
+        <div className="text-[10px] uppercase tracking-widest text-muted-foreground/60 mb-2 font-mono">Live Stats</div>
         <div className="space-y-1.5">
           <div className="flex items-center justify-between">
             <span className="text-[11px] text-muted-foreground font-mono flex items-center gap-1.5">
@@ -77,6 +106,12 @@ export default function Sidebar() {
               <Activity className="w-3 h-3" /> Posts
             </span>
             <span className="text-[11px] font-mono text-foreground">{stats?.posts ?? '—'}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] text-muted-foreground font-mono flex items-center gap-1.5">
+              <ArrowUpCircle className="w-3 h-3" /> Queue
+            </span>
+            <span className="text-[11px] font-mono text-foreground">{stats?.queueTotal ?? '—'}</span>
           </div>
         </div>
       </div>

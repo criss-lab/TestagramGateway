@@ -1,5 +1,8 @@
 import { useState } from 'react';
-import { Globe, RefreshCw, Plus, Trash2, Search, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react';
+import {
+  Globe, RefreshCw, Plus, Trash2, Search, ExternalLink,
+  ChevronDown, ChevronUp, Wifi, WifiOff, Loader2,
+} from 'lucide-react';
 import StatusBadge from '@/components/features/StatusBadge';
 import { useFederationInstances } from '@/hooks/useFederationInstances';
 import { formatNumber, timeAgo, cn } from '@/lib/utils';
@@ -21,8 +24,16 @@ const SOFTWARE_OPTIONS = ['mastodon', 'pixelfed', 'peertube', 'misskey', 'plerom
 
 type SortKey = 'domain' | 'account_count' | 'post_count' | 'last_seen_at';
 
+// Ping result type
+interface PingResult {
+  instanceId: string;
+  latency: number | null;
+  online: boolean;
+  statusCode?: number;
+}
+
 export default function Instances() {
-  const { data: instances, isLoading, isError } = useFederationInstances();
+  const { data: instances, isLoading, isError, refetch } = useFederationInstances();
   const queryClient = useQueryClient();
 
   const [search, setSearch] = useState('');
@@ -32,11 +43,92 @@ export default function Instances() {
   const [sortAsc, setSortAsc] = useState(false);
   const [saving, setSaving] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [pingResults, setPingResults] = useState<Record<string, PingResult>>({});
+  const [pingingId, setPingingId] = useState<string | null>(null);
+  const [pingingAll, setPingingAll] = useState(false);
 
-  // Add form state
   const [form, setForm] = useState({
     domain: '', software: 'mastodon', version: '', inbox_url: '', shared_inbox_url: '',
   });
+
+  // ── Ping a single instance via fetch with timeout ──────────────────────────
+  async function pingInstance(inst: FederationInstance): Promise<PingResult> {
+    const start = Date.now();
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(`https://${inst.domain}/.well-known/webfinger?resource=acct:test@${inst.domain}`, {
+        method: 'HEAD',
+        signal: controller.signal,
+        mode: 'no-cors', // avoids CORS block; treats opaque response as success
+      });
+      clearTimeout(timeout);
+      const latency = Date.now() - start;
+      // With no-cors the status is always 0 (opaque) but no error means it's reachable
+      return { instanceId: inst.id, latency, online: true, statusCode: res.status || undefined };
+    } catch {
+      return { instanceId: inst.id, latency: null, online: false };
+    }
+  }
+
+  async function handlePing(inst: FederationInstance) {
+    setPingingId(inst.id);
+    const result = await pingInstance(inst);
+    setPingResults((p) => ({ ...p, [inst.id]: result }));
+
+    // Update status in DB if state changed
+    const newStatus = result.online ? 'active' : 'unreachable';
+    if (inst.status !== newStatus) {
+      await supabase
+        .from('federation_instances')
+        .update({ status: newStatus, last_seen_at: result.online ? new Date().toISOString() : inst.last_seen_at, updated_at: new Date().toISOString() })
+        .eq('id', inst.id);
+      await supabase.from('activity_logs').insert({
+        event_type: 'instance_ping', module: 'sync',
+        description: `Ping ${inst.domain}: ${result.online ? `online (${result.latency}ms)` : 'unreachable'}`,
+        status: result.online ? 'success' : 'warning',
+      });
+      queryClient.invalidateQueries({ queryKey: ['federation_instances'] });
+    }
+
+    toast[result.online ? 'success' : 'error'](
+      result.online
+        ? `${inst.domain} is online · ${result.latency}ms`
+        : `${inst.domain} is unreachable`
+    );
+    setPingingId(null);
+  }
+
+  async function handlePingAll() {
+    if (!instances?.length) return;
+    setPingingAll(true);
+    const results = await Promise.all(instances.map(pingInstance));
+    const map: Record<string, PingResult> = {};
+    results.forEach((r) => { map[r.instanceId] = r; });
+    setPingResults(map);
+
+    // Batch update statuses
+    await Promise.all(
+      results.map(async (r) => {
+        const inst = instances.find((i) => i.id === r.instanceId);
+        if (!inst) return;
+        const newStatus = r.online ? 'active' : 'unreachable';
+        if (inst.status !== newStatus) {
+          await supabase.from('federation_instances').update({
+            status: newStatus,
+            last_seen_at: r.online ? new Date().toISOString() : inst.last_seen_at,
+            updated_at: new Date().toISOString(),
+          }).eq('id', r.instanceId);
+        }
+      })
+    );
+
+    const online = results.filter((r) => r.online).length;
+    toast.success(`Ping complete: ${online}/${instances.length} instances online.`);
+    queryClient.invalidateQueries({ queryKey: ['federation_instances'] });
+    queryClient.invalidateQueries({ queryKey: ['activity_logs'] });
+    setPingingAll(false);
+  }
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -95,6 +187,9 @@ export default function Instances() {
     .sort((a, b) => {
       const va = a[sortKey] ?? '';
       const vb = b[sortKey] ?? '';
+      if (sortKey === 'account_count' || sortKey === 'post_count') {
+        return sortAsc ? Number(va) - Number(vb) : Number(vb) - Number(va);
+      }
       return sortAsc ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
     });
 
@@ -121,6 +216,7 @@ export default function Instances() {
             className="w-full pl-8 pr-3 py-1.5 bg-card border border-border rounded-md text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/40 font-mono"
           />
         </div>
+
         <div className="flex items-center gap-1">
           {(['all', 'active', 'unreachable', 'suspended'] as const).map((s) => (
             <button key={s} onClick={() => setStatusFilter(s)}
@@ -130,13 +226,27 @@ export default function Instances() {
             </button>
           ))}
         </div>
-        <button
-          onClick={() => setShowAddForm((p) => !p)}
-          className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-primary/10 border border-primary/25 text-primary text-xs rounded-md hover:bg-primary/20 transition-colors font-medium"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          Add Instance
-        </button>
+
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={handlePingAll}
+            disabled={pingingAll || !instances?.length}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-400/10 border border-cyan-400/25 text-cyan-400 text-xs rounded-md hover:bg-cyan-400/20 transition-colors font-medium disabled:opacity-50"
+          >
+            {pingingAll
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              : <Wifi className="w-3.5 h-3.5" />
+            }
+            {pingingAll ? 'Pinging…' : 'Ping All'}
+          </button>
+          <button
+            onClick={() => setShowAddForm((p) => !p)}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-primary/10 border border-primary/25 text-primary text-xs rounded-md hover:bg-primary/20 transition-colors font-medium"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Add Instance
+          </button>
+        </div>
       </div>
 
       {/* Add instance form */}
@@ -164,7 +274,7 @@ export default function Instances() {
                 className="w-full px-3 py-1.5 bg-background border border-border rounded text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/40 font-mono" />
             </div>
             <div>
-              <label className="block text-[11px] text-muted-foreground font-mono mb-1">Inbox URL (auto-generated if empty)</label>
+              <label className="block text-[11px] text-muted-foreground font-mono mb-1">Inbox URL (auto-generated)</label>
               <input value={form.inbox_url} onChange={(e) => setForm({ ...form, inbox_url: e.target.value })}
                 placeholder="https://domain/inbox"
                 className="w-full px-3 py-1.5 bg-background border border-border rounded text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/40 font-mono" />
@@ -188,11 +298,19 @@ export default function Instances() {
       <div className="bg-card border border-border rounded-lg overflow-hidden">
         {isLoading && (
           <div className="p-10 text-center text-sm text-muted-foreground font-mono flex items-center justify-center gap-2">
-            <RefreshCw className="w-4 h-4 animate-spin" /> Loading…
+            <RefreshCw className="w-4 h-4 animate-spin" /> Loading instances…
           </div>
         )}
         {isError && (
-          <div className="p-10 text-center text-sm text-red-400 font-mono">Failed to load instances.</div>
+          <div className="p-10 text-center space-y-3">
+            <p className="text-sm text-red-400 font-mono">Failed to load instances from the backend.</p>
+            <button
+              onClick={() => refetch()}
+              className="flex items-center gap-1.5 mx-auto px-4 py-1.5 bg-red-400/10 border border-red-400/25 text-red-400 text-xs rounded font-mono hover:bg-red-400/20 transition-colors"
+            >
+              <RefreshCw className="w-3 h-3" /> Retry
+            </button>
+          </div>
         )}
         {!isLoading && !isError && (
           <div className="overflow-x-auto">
@@ -206,6 +324,7 @@ export default function Instances() {
                   </th>
                   <th className="text-left px-4 py-3 text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Software</th>
                   <th className="text-left px-4 py-3 text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Status</th>
+                  <th className="text-left px-4 py-3 text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Ping</th>
                   <th className="text-right px-4 py-3 text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
                     <button onClick={() => toggleSort('post_count')} className="hover:text-foreground transition-colors">
                       Posts <SortIcon k="post_count" />
@@ -225,71 +344,112 @@ export default function Instances() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {filtered.map((inst) => (
-                  <>
-                    <tr key={inst.id} className="hover:bg-muted/20 transition-colors group">
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <Globe className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
-                          <span className="font-mono text-xs text-foreground">{inst.domain}</span>
-                          <a href={`https://${inst.domain}`} target="_blank" rel="noopener noreferrer"
-                            className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-primary">
-                            <ExternalLink className="w-3 h-3" />
-                          </a>
-                        </div>
-                        {inst.version && (
-                          <div className="text-[10px] font-mono text-muted-foreground/50 pl-5 mt-0.5">v{inst.version}</div>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={cn('text-[11px] font-mono px-2 py-0.5 rounded border capitalize',
-                          softwareBadge[inst.software] ?? 'text-muted-foreground bg-muted border-border')}>
-                          {inst.software}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3"><StatusBadge status={inst.status} pulse={inst.status === 'active'} /></td>
-                      <td className="px-4 py-3 text-right font-mono text-xs text-muted-foreground">{formatNumber(inst.post_count)}</td>
-                      <td className="px-4 py-3 text-right font-mono text-xs text-muted-foreground">{formatNumber(inst.account_count)}</td>
-                      <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
-                        {inst.last_seen_at ? timeAgo(inst.last_seen_at) : '—'}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => setExpandedId(expandedId === inst.id ? null : inst.id)}
-                            className="px-2 py-1 text-[10px] font-mono rounded border border-border text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
-                          >
-                            Info
-                          </button>
-                          <button onClick={() => handleStatusToggle(inst)}
-                            className="px-2 py-1 text-[10px] font-mono rounded border border-border text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors">
-                            {inst.status === 'active' ? 'Suspend' : 'Activate'}
-                          </button>
-                          <button onClick={() => handleDelete(inst)}
-                            className="p-1 rounded border border-transparent text-muted-foreground hover:text-red-400 hover:border-red-400/20 hover:bg-red-400/8 transition-colors">
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                    {expandedId === inst.id && (
-                      <tr key={`${inst.id}-exp`} className="bg-muted/10">
-                        <td colSpan={7} className="px-4 py-3">
-                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-8 gap-y-1.5 text-xs font-mono">
-                            <div><span className="text-muted-foreground">Inbox:</span> <span className="text-foreground break-all">{inst.inbox_url ?? '—'}</span></div>
-                            <div><span className="text-muted-foreground">Shared Inbox:</span> <span className="text-foreground break-all">{inst.shared_inbox_url ?? '—'}</span></div>
-                            <div><span className="text-muted-foreground">Added:</span> <span className="text-foreground">{timeAgo(inst.created_at)}</span></div>
-                            <div><span className="text-muted-foreground">Updated:</span> <span className="text-foreground">{timeAgo(inst.updated_at)}</span></div>
-                            <div><span className="text-muted-foreground">ID:</span> <span className="text-foreground/50">{inst.id}</span></div>
+                {filtered.map((inst) => {
+                  const pr = pingResults[inst.id];
+                  return (
+                    <>
+                      <tr key={inst.id} className="hover:bg-muted/20 transition-colors group">
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <Globe className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                            <span className="font-mono text-xs text-foreground">{inst.domain}</span>
+                            <a href={`https://${inst.domain}`} target="_blank" rel="noopener noreferrer"
+                              className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-primary">
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
+                          </div>
+                          {inst.version && (
+                            <div className="text-[10px] font-mono text-muted-foreground/50 pl-5 mt-0.5">v{inst.version}</div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={cn('text-[11px] font-mono px-2 py-0.5 rounded border capitalize',
+                            softwareBadge[inst.software] ?? 'text-muted-foreground bg-muted border-border')}>
+                            {inst.software}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <StatusBadge status={inst.status} pulse={inst.status === 'active'} />
+                        </td>
+                        {/* Ping result cell */}
+                        <td className="px-4 py-3">
+                          {pr ? (
+                            <div className="flex items-center gap-1.5">
+                              {pr.online
+                                ? <Wifi className="w-3 h-3 text-emerald-400 flex-shrink-0" />
+                                : <WifiOff className="w-3 h-3 text-red-400 flex-shrink-0" />
+                              }
+                              <span className={cn('text-[11px] font-mono', pr.online ? 'text-emerald-400' : 'text-red-400')}>
+                                {pr.online ? `${pr.latency}ms` : 'timeout'}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-[11px] font-mono text-muted-foreground/40">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono text-xs text-muted-foreground">{formatNumber(inst.post_count)}</td>
+                        <td className="px-4 py-3 text-right font-mono text-xs text-muted-foreground">{formatNumber(inst.account_count)}</td>
+                        <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
+                          {inst.last_seen_at ? timeAgo(inst.last_seen_at) : '—'}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-1">
+                            {/* Ping button */}
+                            <button
+                              onClick={() => handlePing(inst)}
+                              disabled={pingingId === inst.id || pingingAll}
+                              className="p-1 rounded border border-border text-muted-foreground hover:text-cyan-400 hover:border-cyan-400/25 hover:bg-cyan-400/8 transition-colors disabled:opacity-50"
+                              title="Ping instance"
+                            >
+                              {pingingId === inst.id
+                                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                : <Wifi className="w-3.5 h-3.5" />
+                              }
+                            </button>
+                            <button
+                              onClick={() => setExpandedId(expandedId === inst.id ? null : inst.id)}
+                              className="px-2 py-1 text-[10px] font-mono rounded border border-border text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+                            >
+                              Info
+                            </button>
+                            <button onClick={() => handleStatusToggle(inst)}
+                              className="px-2 py-1 text-[10px] font-mono rounded border border-border text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors">
+                              {inst.status === 'active' ? 'Suspend' : 'Activate'}
+                            </button>
+                            <button onClick={() => handleDelete(inst)}
+                              className="p-1 rounded border border-transparent text-muted-foreground hover:text-red-400 hover:border-red-400/20 hover:bg-red-400/8 transition-colors">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
                           </div>
                         </td>
                       </tr>
-                    )}
-                  </>
-                ))}
+                      {expandedId === inst.id && (
+                        <tr key={`${inst.id}-exp`} className="bg-muted/10">
+                          <td colSpan={8} className="px-4 py-3">
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-8 gap-y-1.5 text-xs font-mono">
+                              <div><span className="text-muted-foreground">Inbox:</span> <span className="text-foreground break-all">{inst.inbox_url ?? '—'}</span></div>
+                              <div><span className="text-muted-foreground">Shared Inbox:</span> <span className="text-foreground break-all">{inst.shared_inbox_url ?? '—'}</span></div>
+                              <div><span className="text-muted-foreground">Added:</span> <span className="text-foreground">{timeAgo(inst.created_at)}</span></div>
+                              <div><span className="text-muted-foreground">Updated:</span> <span className="text-foreground">{timeAgo(inst.updated_at)}</span></div>
+                              <div><span className="text-muted-foreground">ID:</span> <span className="text-foreground/50">{inst.id}</span></div>
+                              {pingResults[inst.id] && (
+                                <div>
+                                  <span className="text-muted-foreground">Last Ping:</span>{' '}
+                                  <span className={pingResults[inst.id].online ? 'text-emerald-400' : 'text-red-400'}>
+                                    {pingResults[inst.id].online ? `online · ${pingResults[inst.id].latency}ms` : 'unreachable'}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </>
+                  );
+                })}
                 {filtered.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-4 py-10 text-center text-sm text-muted-foreground font-mono">
+                    <td colSpan={8} className="px-4 py-10 text-center text-sm text-muted-foreground font-mono">
                       {search || statusFilter !== 'all' ? 'No instances match your filters.' : 'No instances configured yet.'}
                     </td>
                   </tr>
