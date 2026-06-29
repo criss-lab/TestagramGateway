@@ -12,6 +12,8 @@ import FeedTimeline from '@/pages/FeedTimeline';
 import PayloadInspector from '@/pages/PayloadInspector';
 import DeliveryAnalytics from '@/pages/DeliveryAnalytics';
 import XCloneFeed from '@/pages/XCloneFeed';
+import BlockedInstances from '@/pages/BlockedInstances';
+import APSchema from '@/pages/APSchema';
 import NotFound from '@/pages/NotFound';
 import { useAutoRefresh } from '@/hooks/useAutoRefresh';
 
@@ -27,7 +29,6 @@ const queryClient = new QueryClient({
 });
 
 function AppInner() {
-  // Background auto-refresh: simulates continuous import + cleanup every 90 seconds
   useAutoRefresh(90_000);
 
   return (
@@ -47,6 +48,8 @@ function AppInner() {
               <Route path="/xclone" element={<XCloneFeed />} />
               <Route path="/inspector" element={<PayloadInspector />} />
               <Route path="/analytics" element={<DeliveryAnalytics />} />
+              <Route path="/blocked" element={<BlockedInstances />} />
+              <Route path="/schema" element={<APSchema />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </main>

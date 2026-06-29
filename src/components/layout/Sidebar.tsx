@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, Globe, ArrowDownCircle, ArrowUpCircle, RefreshCw, Radio,
-  Activity, BarChart2, Code2, Rss, Twitter,
+  Activity, BarChart2, Code2, Rss, Twitter, ShieldOff, Database,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useDashboardStats } from '@/hooks/useDashboardStats';
@@ -13,12 +13,12 @@ const navGroups = [
     items: [
       { to: '/',          icon: LayoutDashboard, label: 'Dashboard',     end: true  },
       { to: '/instances', icon: Globe,            label: 'Instances',     end: false },
-      { to: '/timeline',  icon: Radio,            label: 'Timeline',      end: false },
+      { to: '/timeline',  icon: Radio,            label: 'Live Timeline', end: false },
       { to: '/xclone',    icon: Twitter,          label: 'XClone Feed',   end: false },
     ],
   },
   {
-    label: 'Federation',
+    label: 'ActivityPub',
     items: [
       { to: '/import',    icon: ArrowDownCircle,  label: 'Import Feed',   end: false },
       { to: '/export',    icon: ArrowUpCircle,    label: 'Export Queue',  end: false },
@@ -28,8 +28,10 @@ const navGroups = [
   {
     label: 'Developer',
     items: [
-      { to: '/inspector', icon: Code2,    label: 'AP Inspector',  end: false },
-      { to: '/analytics', icon: BarChart2, label: 'Analytics',    end: false },
+      { to: '/inspector', icon: Code2,    label: 'AP Inspector',   end: false },
+      { to: '/analytics', icon: BarChart2, label: 'Analytics',     end: false },
+      { to: '/blocked',   icon: ShieldOff, label: 'Blocked',       end: false },
+      { to: '/schema',    icon: Database,  label: 'AP Schema',     end: false },
     ],
   },
 ];
@@ -92,25 +94,39 @@ export default function Sidebar() {
         ))}
       </nav>
 
+      {/* AP Endpoint indicators */}
+      <div className="px-4 py-3 border-t border-border">
+        <div className="text-[10px] uppercase tracking-widest text-muted-foreground/60 mb-2 font-mono">AP Endpoints</div>
+        <div className="space-y-1">
+          {[
+            { path: '/webfinger', label: 'WebFinger', color: 'bg-cyan-400' },
+            { path: '/actor',     label: 'Actor',     color: 'bg-violet-400' },
+            { path: '/inbox',     label: 'Inbox',     color: 'bg-emerald-400' },
+            { path: '/outbox',    label: 'Outbox',    color: 'bg-amber-400' },
+            { path: '/nodeinfo',  label: 'NodeInfo',  color: 'bg-pink-400' },
+          ].map((ep) => (
+            <div key={ep.path} className="flex items-center gap-2">
+              <div className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0 animate-pulse', ep.color)} />
+              <span className="text-[10px] font-mono text-muted-foreground/60 flex-1">{ep.label}</span>
+              <span className="text-[9px] font-mono text-muted-foreground/30">active</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
       {/* Quick stats */}
       <div className="px-4 py-3 border-t border-border">
         <div className="text-[10px] uppercase tracking-widest text-muted-foreground/60 mb-2 font-mono">Live Stats</div>
         <div className="space-y-1.5">
           <div className="flex items-center justify-between">
             <span className="text-[11px] text-muted-foreground font-mono flex items-center gap-1.5">
-              <Globe className="w-3 h-3" /> Instances
+              <Globe className="w-3 h-3" />Instances
             </span>
             <span className="text-[11px] font-mono text-foreground">{stats?.instances ?? '—'}</span>
           </div>
           <div className="flex items-center justify-between">
             <span className="text-[11px] text-muted-foreground font-mono flex items-center gap-1.5">
-              <Activity className="w-3 h-3" /> Posts
-            </span>
-            <span className="text-[11px] font-mono text-foreground">{stats?.posts ?? '—'}</span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] text-muted-foreground font-mono flex items-center gap-1.5">
-              <ArrowUpCircle className="w-3 h-3" /> Queue
+              <Activity className="w-3 h-3" />Queue
             </span>
             <span className="text-[11px] font-mono text-foreground">{stats?.queueTotal ?? '—'}</span>
           </div>
@@ -121,7 +137,7 @@ export default function Sidebar() {
       <div className="px-4 py-4 border-t border-border space-y-1.5">
         <div className="flex items-center gap-2">
           <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-          <span className="text-xs text-muted-foreground font-mono">Auto-sync active</span>
+          <span className="text-xs text-muted-foreground font-mono">Federation active</span>
         </div>
         <div className="flex items-center gap-1.5">
           <Rss className="w-3 h-3 text-muted-foreground/40" />

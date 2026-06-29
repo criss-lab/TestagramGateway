@@ -1,420 +1,469 @@
 import { useState } from 'react';
-import { Code2, RefreshCw, Copy, CheckCheck, Search, ChevronDown, ChevronRight, AlertCircle, Wifi, Globe } from 'lucide-react';
-import { useDeliveryQueue } from '@/hooks/useDeliveryQueue';
-import { useActivityLogs } from '@/hooks/useActivityLogs';
-import { timeAgo, cn } from '@/lib/utils';
-import StatusBadge from '@/components/features/StatusBadge';
+import { Code2, RefreshCw, Send, Hash, Globe, Key, Cpu, ChevronRight, ChevronDown, Copy, Check, AlertCircle } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { supabase } from '@/lib/supabase';
+import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import type { WebFingerResult } from '@/types/federation';
+
+type Tab = 'builder' | 'webfinger' | 'actor' | 'nodeinfo' | 'raw';
 
 const AP_TEMPLATES: Record<string, object> = {
-  'Note (Create)': {
+  Create: {
     '@context': 'https://www.w3.org/ns/activitystreams',
+    id: 'https://testagram.site/notes/example-id/activity',
     type: 'Create',
-    id: 'https://testagram.site/activities/create/001',
-    actor: 'https://testagram.site/users/alice',
+    actor: 'https://testagram.site/users/testagram',
+    published: new Date().toISOString(),
     to: ['https://www.w3.org/ns/activitystreams#Public'],
-    cc: ['https://testagram.site/users/alice/followers'],
+    cc: ['https://testagram.site/users/testagram/followers'],
     object: {
+      id: 'https://testagram.site/notes/example-id',
       type: 'Note',
-      id: 'https://testagram.site/posts/001',
-      attributedTo: 'https://testagram.site/users/alice',
-      content: '<p>Hello Fediverse! This is a test post from Testagram.</p>',
+      attributedTo: 'https://testagram.site/users/testagram',
+      content: '<p>Hello Fediverse from testagram.site!</p>',
       published: new Date().toISOString(),
       to: ['https://www.w3.org/ns/activitystreams#Public'],
+      cc: ['https://testagram.site/users/testagram/followers'],
+      tag: [{ type: 'Hashtag', name: '#testagram', href: 'https://testagram.site/tags/testagram' }],
     },
   },
-  'Follow': {
+  Follow: {
     '@context': 'https://www.w3.org/ns/activitystreams',
+    id: 'https://testagram.site/users/testagram#follows/alice',
     type: 'Follow',
-    id: 'https://testagram.site/activities/follow/001',
-    actor: 'https://testagram.site/users/alice',
-    object: 'https://mastodon.social/users/bob',
+    actor: 'https://testagram.site/users/testagram',
+    object: 'https://mastodon.social/users/alice_dev',
   },
-  'Like': {
+  Like: {
     '@context': 'https://www.w3.org/ns/activitystreams',
+    id: 'https://testagram.site/users/testagram#likes/example',
     type: 'Like',
-    id: 'https://testagram.site/activities/like/001',
-    actor: 'https://testagram.site/users/alice',
-    object: 'https://mastodon.social/users/bob/statuses/001',
+    actor: 'https://testagram.site/users/testagram',
+    object: 'https://mastodon.social/users/alice_dev/statuses/001',
   },
-  'Announce (Boost)': {
+  Announce: {
     '@context': 'https://www.w3.org/ns/activitystreams',
+    id: 'https://testagram.site/users/testagram#announces/example',
     type: 'Announce',
-    id: 'https://testagram.site/activities/announce/001',
-    actor: 'https://testagram.site/users/alice',
-    object: 'https://mastodon.social/users/bob/statuses/001',
+    actor: 'https://testagram.site/users/testagram',
+    published: new Date().toISOString(),
     to: ['https://www.w3.org/ns/activitystreams#Public'],
-    cc: ['https://testagram.site/users/alice/followers'],
+    cc: ['https://testagram.site/users/testagram/followers'],
+    object: 'https://mastodon.social/users/alice_dev/statuses/001',
   },
-  'Person (Actor)': {
-    '@context': ['https://www.w3.org/ns/activitystreams', 'https://w3id.org/security/v1'],
-    type: 'Person',
-    id: 'https://testagram.site/users/alice',
-    following: 'https://testagram.site/users/alice/following',
-    followers: 'https://testagram.site/users/alice/followers',
-    inbox: 'https://testagram.site/users/alice/inbox',
-    outbox: 'https://testagram.site/users/alice/outbox',
-    preferredUsername: 'alice',
-    name: 'Alice',
-    summary: '<p>Test user on Testagram</p>',
-    url: 'https://testagram.site/@alice',
-    publicKey: {
-      id: 'https://testagram.site/users/alice#main-key',
-      owner: 'https://testagram.site/users/alice',
-      publicKeyPem: '-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----',
+  Accept: {
+    '@context': 'https://www.w3.org/ns/activitystreams',
+    id: 'https://testagram.site/users/testagram#accepts/follow',
+    type: 'Accept',
+    actor: 'https://testagram.site/users/testagram',
+    object: {
+      id: 'https://mastodon.social/users/alice#follows/testagram',
+      type: 'Follow',
+      actor: 'https://mastodon.social/users/alice',
+      object: 'https://testagram.site/users/testagram',
     },
   },
-  'WebFinger Response': {
-    subject: 'acct:alice@testagram.site',
-    links: [{ rel: 'self', type: 'application/activity+json', href: 'https://testagram.site/users/alice' }],
+  Delete: {
+    '@context': 'https://www.w3.org/ns/activitystreams',
+    id: 'https://testagram.site/notes/example-id#delete',
+    type: 'Delete',
+    actor: 'https://testagram.site/users/testagram',
+    to: ['https://www.w3.org/ns/activitystreams#Public'],
+    object: { id: 'https://testagram.site/notes/example-id', type: 'Tombstone' },
   },
 };
 
-function JsonNode({ data, depth = 0 }: { data: unknown; depth?: number }) {
-  const [collapsed, setCollapsed] = useState(depth > 2);
-  if (data === null) return <span className="text-muted-foreground">null</span>;
-  if (typeof data === 'boolean') return <span className="text-amber-400">{String(data)}</span>;
-  if (typeof data === 'number') return <span className="text-cyan-400">{data}</span>;
-  if (typeof data === 'string') return <span className="text-emerald-400">"{data}"</span>;
-  if (Array.isArray(data)) {
-    if (!data.length) return <span className="text-muted-foreground">[]</span>;
-    return <span>
-      <button onClick={() => setCollapsed(p => !p)} className="text-amber-300 hover:text-amber-200 transition-colors">
-        {collapsed ? <ChevronRight className="inline w-3 h-3" /> : <ChevronDown className="inline w-3 h-3" />}[{data.length}]
-      </button>
-      {!collapsed && <div className="ml-4 border-l border-border/40 pl-2">
-        {data.map((item, i) => <div key={i}><JsonNode data={item} depth={depth + 1} />{i < data.length - 1 && <span className="text-muted-foreground">,</span>}</div>)}
-      </div>}
-    </span>;
+function JsonNode({ value, depth = 0 }: { value: unknown; depth?: number }) {
+  const [collapsed, setCollapsed] = useState(false);
+  const indent = depth * 12;
+
+  if (value === null) return <span className="text-rose-400 font-mono text-xs">null</span>;
+  if (typeof value === 'boolean') return <span className="text-amber-400 font-mono text-xs">{String(value)}</span>;
+  if (typeof value === 'number') return <span className="text-sky-400 font-mono text-xs">{value}</span>;
+  if (typeof value === 'string') {
+    if (value.startsWith('https://') || value.startsWith('http://')) {
+      return <a href={value} target="_blank" rel="noopener noreferrer" className="text-cyan-400 font-mono text-xs hover:underline break-all">{JSON.stringify(value)}</a>;
+    }
+    return <span className="text-emerald-400 font-mono text-xs break-all">{JSON.stringify(value)}</span>;
   }
-  if (typeof data === 'object') {
-    const keys = Object.keys(data as object);
-    if (!keys.length) return <span className="text-muted-foreground">{'{}'}</span>;
-    return <span>
-      <button onClick={() => setCollapsed(p => !p)} className="text-amber-300 hover:text-amber-200 transition-colors">
-        {collapsed ? <ChevronRight className="inline w-3 h-3" /> : <ChevronDown className="inline w-3 h-3" />}{'{'}…{'}'}
-      </button>
-      {!collapsed && <div className="ml-4 border-l border-border/40 pl-2">
-        {keys.map((key, i) => <div key={key} className="leading-6">
-          <span className="text-violet-400">"{key}"</span><span className="text-muted-foreground">: </span>
-          <JsonNode data={(data as Record<string, unknown>)[key]} depth={depth + 1} />
-          {i < keys.length - 1 && <span className="text-muted-foreground">,</span>}
-        </div>)}
-      </div>}
-    </span>;
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) return <span className="text-muted-foreground font-mono text-xs">[]</span>;
+    return (
+      <span>
+        <button onClick={() => setCollapsed((p) => !p)} className="text-muted-foreground hover:text-foreground transition-colors">
+          {collapsed ? <ChevronRight className="w-3 h-3 inline" /> : <ChevronDown className="w-3 h-3 inline" />}
+        </button>
+        {collapsed ? (
+          <span className="text-muted-foreground font-mono text-xs">[…{value.length}]</span>
+        ) : (
+          <span>
+            <span className="text-foreground font-mono text-xs">[</span>
+            <div style={{ marginLeft: indent + 12 }}>
+              {value.map((item, i) => (
+                <div key={i}>
+                  <JsonNode value={item} depth={depth + 1} />
+                  {i < value.length - 1 && <span className="text-muted-foreground font-mono text-xs">,</span>}
+                </div>
+              ))}
+            </div>
+            <span className="text-foreground font-mono text-xs">]</span>
+          </span>
+        )}
+      </span>
+    );
   }
-  return <span className="text-foreground">{String(data)}</span>;
+
+  if (typeof value === 'object') {
+    const entries = Object.entries(value as object);
+    if (entries.length === 0) return <span className="text-muted-foreground font-mono text-xs">{'{}'}</span>;
+    return (
+      <span>
+        <button onClick={() => setCollapsed((p) => !p)} className="text-muted-foreground hover:text-foreground transition-colors">
+          {collapsed ? <ChevronRight className="w-3 h-3 inline" /> : <ChevronDown className="w-3 h-3 inline" />}
+        </button>
+        {collapsed ? (
+          <span className="text-muted-foreground font-mono text-xs">{'{…}'}</span>
+        ) : (
+          <span>
+            <span className="text-foreground font-mono text-xs">{'{'}</span>
+            <div style={{ marginLeft: indent + 12 }}>
+              {entries.map(([key, val], i) => (
+                <div key={key}>
+                  <span className="text-violet-300 font-mono text-xs">"{key}"</span>
+                  <span className="text-muted-foreground font-mono text-xs">: </span>
+                  <JsonNode value={val} depth={depth + 1} />
+                  {i < entries.length - 1 && <span className="text-muted-foreground font-mono text-xs">,</span>}
+                </div>
+              ))}
+            </div>
+            <span className="text-foreground font-mono text-xs">{'}'}</span>
+          </span>
+        )}
+      </span>
+    );
+  }
+
+  return <span className="text-muted-foreground font-mono text-xs">{String(value)}</span>;
 }
 
-type Mode = 'queue' | 'builder' | 'webfinger';
-
 export default function PayloadInspector() {
-  const [mode, setMode] = useState<Mode>('queue');
-  const [search, setSearch] = useState('');
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-  const [selectedTemplate, setSelectedTemplate] = useState('Note (Create)');
-  const [customJson, setCustomJson] = useState('');
-  const [jsonError, setJsonError] = useState<string | null>(null);
-
-  // WebFinger state
-  const [wfHandle, setWfHandle] = useState('');
+  const [tab, setTab] = useState<Tab>('builder');
+  const [selectedTemplate, setSelectedTemplate] = useState('Create');
+  const [rawInput, setRawInput] = useState(JSON.stringify(AP_TEMPLATES.Create, null, 2));
+  const [parsed, setParsed] = useState<object | null>(AP_TEMPLATES.Create);
+  const [parseError, setParseError] = useState<string | null>(null);
+  const [wfHandle, setWfHandle] = useState('@alice@mastodon.social');
+  const [wfResult, setWfResult] = useState<object | null>(null);
   const [wfLoading, setWfLoading] = useState(false);
-  const [wfResult, setWfResult] = useState<WebFingerResult | null>(null);
-  const [wfActorResult, setWfActorResult] = useState<unknown>(null);
-  const [wfError, setWfError] = useState<string | null>(null);
+  const [actorUrl, setActorUrl] = useState('https://mastodon.social/users/alice');
+  const [actorResult, setActorResult] = useState<object | null>(null);
+  const [actorLoading, setActorLoading] = useState(false);
+  const [nodeDomain, setNodeDomain] = useState('mastodon.social');
+  const [nodeResult, setNodeResult] = useState<object | null>(null);
+  const [nodeLoading, setNodeLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const queryClient = useQueryClient();
 
-  const { data: items, isLoading } = useDeliveryQueue('all');
-  const { data: logs } = useActivityLogs(50);
+  function loadTemplate(name: string) {
+    const t = AP_TEMPLATES[name];
+    setSelectedTemplate(name);
+    setRawInput(JSON.stringify(t, null, 2));
+    setParsed(t);
+    setParseError(null);
+  }
 
-  const filteredItems = (items ?? []).filter(item => {
-    const q = search.toLowerCase();
-    return !q || item.activity_type.toLowerCase().includes(q) || (item.target_domain ?? '').toLowerCase().includes(q);
-  });
+  function handleRawChange(val: string) {
+    setRawInput(val);
+    try {
+      const p = JSON.parse(val);
+      setParsed(p);
+      setParseError(null);
+    } catch (e) {
+      setParseError(e instanceof Error ? e.message : 'Parse error');
+      setParsed(null);
+    }
+  }
 
-  const selectedItem = items?.find(i => i.id === selectedId);
-  const templatePayload = AP_TEMPLATES[selectedTemplate] ?? {};
-  let parsedCustom: unknown = null;
-  try { parsedCustom = customJson ? JSON.parse(customJson) : templatePayload; } catch { parsedCustom = templatePayload; }
-
-  function handleCopy(obj: unknown) {
-    navigator.clipboard.writeText(JSON.stringify(obj, null, 2));
+  function handleCopy() {
+    navigator.clipboard.writeText(rawInput);
     setCopied(true);
-    toast.success('Payload copied.');
-    setTimeout(() => setCopied(false), 2000);
+    setTimeout(() => setCopied(false), 1500);
   }
 
-  function handleCustomChange(val: string) {
-    setCustomJson(val);
-    try { JSON.parse(val); setJsonError(null); } catch (e: any) { setJsonError(e.message); }
-  }
-
-  async function handleWebFinger(e: React.FormEvent) {
-    e.preventDefault();
-    if (!wfHandle.trim()) return;
+  async function resolveWebFinger() {
     setWfLoading(true);
     setWfResult(null);
-    setWfActorResult(null);
-    setWfError(null);
-
-    const raw = wfHandle.trim().replace(/^@/, '');
-    const parts = raw.split('@');
-    if (parts.length !== 2) {
-      setWfError('Use format: user@domain or @user@domain');
-      setWfLoading(false);
-      return;
-    }
-    const [user, domain] = parts;
-
     try {
-      const wfUrl = `https://corsproxy.io/?url=${encodeURIComponent(`https://${domain}/.well-known/webfinger?resource=acct:${user}@${domain}`)}`;
-      const res = await fetch(wfUrl, { headers: { Accept: 'application/jrd+json,application/json' } });
-      if (!res.ok) throw new Error(`WebFinger returned HTTP ${res.status}`);
-      const data: WebFingerResult = await res.json();
+      const clean = wfHandle.replace(/^@/, '');
+      const [user, domain] = clean.split('@');
+      if (!user || !domain) { toast.error('Format: @user@domain'); return; }
+      const res = await fetch(`https://${domain}/.well-known/webfinger?resource=acct:${user}@${domain}`, {
+        headers: { Accept: 'application/jrd+json, application/json' },
+      });
+      const data = await res.json();
       setWfResult(data);
 
-      // Try to fetch actor JSON
-      const actorLink = data.links?.find(l => l.type === 'application/activity+json' || l.rel === 'self');
-      if (actorLink?.href) {
-        const actorUrl = `https://corsproxy.io/?url=${encodeURIComponent(actorLink.href)}`;
-        const actorRes = await fetch(actorUrl, { headers: { Accept: 'application/activity+json,application/ld+json' } });
-        if (actorRes.ok) setWfActorResult(await actorRes.json());
-      }
-    } catch (err: any) {
-      setWfError(`Failed to resolve WebFinger: ${err.message}. (CORS proxy may be needed for some instances)`);
+      await supabase.from('webfinger_cache').upsert({
+        resource: `acct:${user}@${domain}`, subject: data.subject,
+        aliases: data.aliases ?? [], links: data.links ?? [],
+        raw_response: data, fetched_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 86400000).toISOString(),
+      }, { onConflict: 'resource' });
+      await supabase.from('activity_logs').insert({
+        event_type: 'webfinger_lookup', module: 'routes',
+        description: `WebFinger resolved: acct:${user}@${domain}`, status: 'success',
+      });
+      queryClient.invalidateQueries({ queryKey: ['activity_logs'] });
+      toast.success(`Resolved @${user}@${domain}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'WebFinger failed');
+    } finally {
+      setWfLoading(false);
     }
-    setWfLoading(false);
   }
 
+  async function fetchActor() {
+    setActorLoading(true);
+    setActorResult(null);
+    try {
+      const res = await fetch(actorUrl, { headers: { Accept: 'application/activity+json, application/ld+json' } });
+      const data = await res.json();
+      setActorResult(data);
+
+      const domain = new URL(actorUrl).hostname;
+      const handle = `@${data.preferredUsername}@${domain}`;
+      await supabase.from('remote_accounts').upsert({
+        actor_id: data.id, handle,
+        display_name: data.name ?? data.preferredUsername,
+        bio: typeof data.summary === 'string' ? data.summary.replace(/<[^>]+>/g, '').slice(0, 500) : null,
+        avatar_url: data.icon?.url ?? null, instance_domain: domain,
+        last_fetched_at: new Date().toISOString(),
+      }, { onConflict: 'actor_id' });
+
+      if (data.publicKey?.publicKeyPem) {
+        await supabase.from('public_keys').upsert({
+          key_id: data.publicKey.id, actor_uri: data.id, owner: data.publicKey.owner,
+          public_key_pem: data.publicKey.publicKeyPem,
+        }, { onConflict: 'key_id' });
+      }
+      queryClient.invalidateQueries({ queryKey: ['remote_accounts'] });
+      toast.success(`Fetched actor: ${handle}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Actor fetch failed');
+    } finally {
+      setActorLoading(false);
+    }
+  }
+
+  async function fetchNodeInfo() {
+    setNodeLoading(true);
+    setNodeResult(null);
+    try {
+      const domain = nodeDomain.replace(/^https?:\/\//, '');
+      const wkRes = await fetch(`https://${domain}/.well-known/nodeinfo`);
+      const wk = await wkRes.json();
+      const link = wk.links?.find((l: any) => l.rel?.includes('nodeinfo'));
+      const niRes = await fetch(link.href);
+      const ni = await niRes.json();
+      setNodeResult(ni);
+
+      await supabase.from('nodeinfo_cache').upsert({
+        domain, software_name: ni.software?.name, software_version: ni.software?.version,
+        protocols: ni.protocols ?? [], open_registrations: ni.openRegistrations,
+        user_count: ni.usage?.users?.total, post_count: ni.usage?.localPosts,
+        raw_response: ni, fetched_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 21600000).toISOString(),
+      }, { onConflict: 'domain' });
+      await supabase.from('federation_instances').upsert({
+        domain, software: ni.software?.name?.toLowerCase() ?? 'unknown',
+        version: ni.software?.version, status: 'active',
+        account_count: ni.usage?.users?.total ?? 0, post_count: ni.usage?.localPosts ?? 0,
+        last_seen_at: new Date().toISOString(),
+        inbox_url: `https://${domain}/inbox`, shared_inbox_url: `https://${domain}/inbox`,
+      }, { onConflict: 'domain' });
+      queryClient.invalidateQueries({ queryKey: ['federation_instances'] });
+      toast.success(`NodeInfo fetched for ${domain}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'NodeInfo failed');
+    } finally {
+      setNodeLoading(false);
+    }
+  }
+
+  const TABS: { key: Tab; label: string; icon: React.ElementType }[] = [
+    { key: 'builder', label: 'Activity Builder', icon: Cpu },
+    { key: 'webfinger', label: 'WebFinger', icon: Hash },
+    { key: 'actor', label: 'Actor API', icon: Globe },
+    { key: 'nodeinfo', label: 'NodeInfo', icon: Key },
+    { key: 'raw', label: 'Raw Inspector', icon: Code2 },
+  ];
+
   return (
-    <div className="max-w-6xl space-y-4">
-      {/* Mode tabs */}
-      <div className="flex items-center gap-1 bg-muted/40 border border-border rounded-lg p-1 w-fit">
-        {(['queue', 'builder', 'webfinger'] as Mode[]).map(m => (
-          <button key={m} onClick={() => setMode(m)}
-            className={cn('flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all',
-              mode === m ? 'bg-card text-foreground border border-border shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
-            {m === 'queue' ? <Code2 className="w-3.5 h-3.5" /> : m === 'builder' ? <Code2 className="w-3.5 h-3.5" /> : <Globe className="w-3.5 h-3.5" />}
-            {m === 'queue' ? 'Queue Inspector' : m === 'builder' ? 'Payload Builder' : 'WebFinger Resolver'}
+    <div className="max-w-5xl space-y-4">
+      {/* Tabs */}
+      <div className="flex items-center gap-1 bg-card border border-border rounded-xl p-1">
+        {TABS.map(({ key, label, icon: Icon }) => (
+          <button key={key} onClick={() => setTab(key)}
+            className={cn('flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-mono transition-all flex-1 justify-center',
+              tab === key ? 'bg-primary/10 text-primary border border-primary/20' : 'text-muted-foreground hover:text-foreground hover:bg-muted/60 border border-transparent')}>
+            <Icon className="w-3.5 h-3.5" />{label}
           </button>
         ))}
       </div>
 
-      {/* Queue Inspector */}
-      {mode === 'queue' && (
-        <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-          <div className="lg:col-span-2 space-y-2">
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Filter by type or domain…"
-                className="w-full pl-8 pr-3 py-1.5 bg-card border border-border rounded-md text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/40 font-mono" />
-            </div>
-            <div className="bg-card border border-border rounded-lg overflow-hidden max-h-[520px] overflow-y-auto">
-              {isLoading ? (
-                <div className="p-8 text-center text-sm text-muted-foreground font-mono flex items-center justify-center gap-2">
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Loading…
-                </div>
-              ) : filteredItems.length === 0 ? (
-                <div className="p-8 text-center text-sm text-muted-foreground font-mono">No items found.</div>
-              ) : (
-                <div className="divide-y divide-border">
-                  {filteredItems.map(item => (
-                    <button key={item.id} onClick={() => setSelectedId(item.id)}
-                      className={cn('w-full text-left px-3 py-2.5 hover:bg-muted/30 transition-colors',
-                        selectedId === item.id && 'bg-primary/8 border-l-2 border-primary')}>
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-[11px] font-mono text-foreground font-semibold">{item.activity_type}</span>
-                        <StatusBadge status={item.status} />
-                      </div>
-                      <div className="text-[11px] font-mono text-muted-foreground truncate">{item.target_domain ?? '—'}</div>
-                      <div className="text-[10px] font-mono text-muted-foreground/50 mt-0.5">{timeAgo(item.created_at)}</div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="bg-card border border-border rounded-lg p-3 max-h-48 overflow-y-auto">
-              <div className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-mono mb-2">Recent Events</div>
-              <div className="space-y-1.5">
-                {(logs ?? []).slice(0, 10).map(log => (
-                  <div key={log.id} className="flex items-start gap-2">
-                    <div className={cn('w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0',
-                      log.status === 'success' ? 'bg-emerald-400' : log.status === 'warning' ? 'bg-amber-400' : 'bg-red-400')} />
-                    <span className="text-[11px] text-muted-foreground leading-relaxed">{log.description}</span>
-                  </div>
+      {/* Activity Builder */}
+      {tab === 'builder' && (
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-3">
+            <div>
+              <div className="text-[11px] uppercase tracking-widest text-muted-foreground/60 font-mono mb-2">AP Activity Template</div>
+              <div className="flex flex-wrap gap-1.5">
+                {Object.keys(AP_TEMPLATES).map((name) => (
+                  <button key={name} onClick={() => loadTemplate(name)}
+                    className={cn('px-2.5 py-1 rounded text-xs font-mono border transition-all',
+                      selectedTemplate === name ? 'bg-primary/15 text-primary border-primary/30' : 'text-muted-foreground border-border hover:bg-muted/60')}>
+                    {name}
+                  </button>
                 ))}
               </div>
             </div>
-          </div>
-          <div className="lg:col-span-3">
-            {selectedItem ? (
-              <div className="bg-card border border-border rounded-lg overflow-hidden">
-                <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-                  <div className="flex items-center gap-3">
-                    <span className="text-sm font-semibold text-foreground">{selectedItem.activity_type}</span>
-                    <StatusBadge status={selectedItem.status} />
-                    <span className="text-[11px] font-mono text-muted-foreground">{selectedItem.target_domain}</span>
-                  </div>
-                  <button onClick={() => handleCopy(selectedItem.activity_data)}
-                    className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-mono rounded border border-border text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors">
-                    {copied ? <CheckCheck className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}Copy
-                  </button>
-                </div>
-                <div className="flex flex-wrap gap-x-6 gap-y-1 px-4 py-2.5 bg-muted/20 border-b border-border text-[11px] font-mono text-muted-foreground">
-                  <span>Attempts: <span className="text-foreground">{selectedItem.attempts}/{selectedItem.max_attempts}</span></span>
-                  <span>Inbox: <span className="text-foreground break-all">{selectedItem.target_inbox}</span></span>
-                  <span>Scheduled: <span className="text-foreground">{timeAgo(selectedItem.scheduled_at)}</span></span>
-                  {selectedItem.delivered_at && <span>Delivered: <span className="text-emerald-400">{timeAgo(selectedItem.delivered_at)}</span></span>}
-                </div>
-                {selectedItem.last_error && (
-                  <div className="flex items-start gap-2 px-4 py-2.5 bg-red-400/5 border-b border-red-400/20">
-                    <AlertCircle className="w-3.5 h-3.5 text-red-400 flex-shrink-0 mt-0.5" />
-                    <span className="text-[11px] font-mono text-red-400">{selectedItem.last_error}</span>
-                  </div>
-                )}
-                <div className="p-4 font-mono text-[12px] leading-6 overflow-x-auto max-h-[400px] overflow-y-auto">
-                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground/60 mb-3">activity_data payload</div>
-                  <JsonNode data={selectedItem.activity_data} depth={0} />
-                </div>
-                <details className="border-t border-border">
-                  <summary className="px-4 py-2 text-[11px] font-mono text-muted-foreground cursor-pointer hover:text-foreground transition-colors select-none">Raw JSON</summary>
-                  <pre className="px-4 pb-4 text-[11px] font-mono text-cyan-300 overflow-x-auto max-h-48">{JSON.stringify(selectedItem.activity_data, null, 2)}</pre>
-                </details>
-              </div>
-            ) : (
-              <div className="bg-card border border-border rounded-lg p-16 flex flex-col items-center justify-center gap-3 text-center">
-                <Code2 className="w-8 h-8 text-muted-foreground/30" />
-                <div className="text-sm text-muted-foreground font-mono">Select an item to inspect its payload</div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Payload Builder */}
-      {mode === 'builder' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div className="space-y-3">
-            <div className="flex items-center gap-3">
-              <label className="text-[11px] text-muted-foreground font-mono">Template</label>
-              <select value={selectedTemplate} onChange={e => { setSelectedTemplate(e.target.value); setCustomJson(''); setJsonError(null); }}
-                className="flex-1 px-2.5 py-1.5 bg-card border border-border rounded text-xs font-mono text-foreground focus:outline-none focus:border-primary/40">
-                {Object.keys(AP_TEMPLATES).map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-            <div>
+            <div className="relative">
               <div className="flex items-center justify-between mb-1">
-                <label className="text-[11px] text-muted-foreground font-mono">Edit JSON</label>
-                <button onClick={() => { setCustomJson(JSON.stringify(templatePayload, null, 2)); setJsonError(null); }}
-                  className="text-[11px] font-mono text-primary hover:text-primary/80 transition-colors">Load template →</button>
+                <span className="text-[11px] font-mono text-muted-foreground">Edit payload</span>
+                <button onClick={handleCopy} className="flex items-center gap-1 text-[10px] font-mono text-muted-foreground hover:text-foreground transition-colors">
+                  {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                  {copied ? 'Copied' : 'Copy'}
+                </button>
               </div>
-              <textarea value={customJson} onChange={e => handleCustomChange(e.target.value)} rows={18}
-                placeholder={JSON.stringify(templatePayload, null, 2)}
-                className={cn('w-full px-3 py-2.5 bg-background border rounded text-[12px] font-mono text-foreground placeholder:text-muted-foreground/40 focus:outline-none resize-none',
-                  jsonError ? 'border-red-400/40' : 'border-border focus:border-primary/40')} />
-              {jsonError && <div className="flex items-center gap-1.5 mt-1 text-[11px] font-mono text-red-400"><AlertCircle className="w-3 h-3" />{jsonError}</div>}
+              <textarea value={rawInput} onChange={(e) => handleRawChange(e.target.value)} rows={20}
+                spellCheck={false}
+                className="w-full px-3 py-2.5 bg-background border border-border rounded-lg text-xs font-mono text-foreground focus:outline-none focus:border-primary/40 resize-none leading-relaxed" />
+              {parseError && (
+                <div className="flex items-center gap-2 mt-1 text-[11px] font-mono text-red-400">
+                  <AlertCircle className="w-3 h-3 flex-shrink-0" />{parseError}
+                </div>
+              )}
             </div>
           </div>
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="text-[11px] font-mono text-muted-foreground uppercase tracking-wider">Interactive Preview</div>
-              <button onClick={() => handleCopy(parsedCustom ?? templatePayload)}
-                className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-mono rounded border border-border text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors">
-                {copied ? <CheckCheck className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}Copy
-              </button>
-            </div>
-            <div className="bg-card border border-border rounded-lg p-4 font-mono text-[12px] leading-6 overflow-auto max-h-[540px]">
-              <JsonNode data={parsedCustom ?? templatePayload} depth={0} />
-            </div>
-            <div className="bg-muted/20 border border-border rounded-lg p-3 space-y-1.5">
-              <div className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-mono mb-2">AP Spec Reference</div>
-              <div className="text-[11px] font-mono text-muted-foreground space-y-1">
-                <div>• <span className="text-foreground">@context</span>: <span className="text-emerald-400">"https://www.w3.org/ns/activitystreams"</span></div>
-                <div>• <span className="text-foreground">type</span>: Create, Follow, Like, Announce, Undo, Delete, Accept, Reject</div>
-                <div>• <span className="text-foreground">actor</span>: valid Actor URL at <span className="text-cyan-400">testagram.site</span></div>
-                <div>• <span className="text-foreground">to / cc</span>: Public = <span className="text-cyan-400">activitystreams#Public</span></div>
-                <div>• <span className="text-foreground">id</span>: globally unique dereferenceable URL</div>
-              </div>
+          <div>
+            <div className="text-[11px] uppercase tracking-widest text-muted-foreground/60 font-mono mb-2">Visual Inspector</div>
+            <div className="bg-background border border-border rounded-lg p-4 overflow-auto max-h-[560px] leading-relaxed">
+              {parsed ? <JsonNode value={parsed} /> : <span className="text-red-400 text-xs font-mono">Invalid JSON</span>}
             </div>
           </div>
         </div>
       )}
 
       {/* WebFinger Resolver */}
-      {mode === 'webfinger' && (
+      {tab === 'webfinger' && (
         <div className="space-y-4">
-          <div className="bg-card border border-border rounded-lg p-4">
-            <div className="text-[11px] font-mono text-muted-foreground/60 uppercase tracking-widest mb-3">Resolve Fediverse Handle via WebFinger</div>
-            <form onSubmit={handleWebFinger} className="flex items-center gap-3">
-              <div className="relative flex-1 max-w-96">
-                <Globe className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <input
-                  value={wfHandle}
-                  onChange={e => setWfHandle(e.target.value)}
-                  placeholder="@alice@mastodon.social"
-                  className="w-full pl-9 pr-3 py-2 bg-background border border-border rounded-lg text-sm font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/40"
-                />
-              </div>
-              <button type="submit" disabled={wfLoading || !wfHandle.trim()}
-                className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground text-sm font-semibold rounded-lg hover:bg-primary/90 disabled:opacity-50 transition-colors">
-                {wfLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Wifi className="w-4 h-4" />}
-                {wfLoading ? 'Resolving…' : 'Resolve'}
+          <div className="bg-card border border-border rounded-xl p-4">
+            <div className="text-xs font-semibold text-foreground mb-3">WebFinger Resolver · RFC 7033</div>
+            <div className="flex gap-2">
+              <input value={wfHandle} onChange={(e) => setWfHandle(e.target.value)}
+                placeholder="@alice@mastodon.social or acct:alice@mastodon.social"
+                className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm font-mono text-foreground focus:outline-none focus:border-primary/40" />
+              <button onClick={resolveWebFinger} disabled={wfLoading}
+                className="flex items-center gap-1.5 px-4 py-2 bg-primary text-primary-foreground text-sm font-semibold rounded-lg hover:bg-primary/90 disabled:opacity-50">
+                {wfLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}Resolve
               </button>
-            </form>
-            <p className="text-[11px] text-muted-foreground font-mono mt-2">Fetches the WebFinger JRD and resolves the ActivityPub Actor object from the real Fediverse.</p>
+            </div>
+            <p className="text-[11px] text-muted-foreground font-mono mt-2">
+              Fetches the JRD document from /.well-known/webfinger and caches it in Supabase
+            </p>
           </div>
-
-          {wfError && (
-            <div className="flex items-start gap-3 bg-red-400/5 border border-red-400/20 rounded-lg px-4 py-3">
-              <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
-              <p className="text-sm font-mono text-red-400">{wfError}</p>
-            </div>
-          )}
-
           {wfResult && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <div className="bg-card border border-border rounded-lg overflow-hidden">
-                <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-                  <span className="text-sm font-semibold text-foreground">WebFinger JRD</span>
-                  <button onClick={() => handleCopy(wfResult)}
-                    className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-mono rounded border border-border text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors">
-                    <Copy className="w-3 h-3" />Copy
-                  </button>
-                </div>
-                <div className="p-4 font-mono text-[12px] leading-6 overflow-x-auto max-h-80">
-                  <div className="text-[10px] uppercase text-muted-foreground/60 mb-2">subject: <span className="text-emerald-400">{wfResult.subject}</span></div>
-                  <JsonNode data={wfResult} depth={0} />
-                </div>
+            <div className="bg-card border border-border rounded-xl p-4">
+              <div className="text-xs font-semibold text-foreground mb-3">WebFinger Response</div>
+              <div className="bg-background border border-border rounded-lg p-4 overflow-auto max-h-96">
+                <JsonNode value={wfResult} />
               </div>
-
-              {wfActorResult && (
-                <div className="bg-card border border-border rounded-lg overflow-hidden">
-                  <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-                    <span className="text-sm font-semibold text-foreground">ActivityPub Actor</span>
-                    <button onClick={() => handleCopy(wfActorResult)}
-                      className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-mono rounded border border-border text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors">
-                      <Copy className="w-3 h-3" />Copy
-                    </button>
-                  </div>
-                  <div className="p-4 font-mono text-[12px] leading-6 overflow-x-auto max-h-80">
-                    <JsonNode data={wfActorResult} depth={0} />
-                  </div>
-                </div>
-              )}
             </div>
           )}
+        </div>
+      )}
 
-          {/* Quick lookup examples */}
-          <div className="bg-card border border-border rounded-lg p-4">
-            <div className="text-[11px] font-mono text-muted-foreground/60 uppercase tracking-widest mb-3">Quick Examples</div>
-            <div className="flex flex-wrap gap-2">
-              {['@Mastodon@mastodon.social', '@fosstodon@fosstodon.org', '@pixelfed@pixelfed.social'].map(handle => (
-                <button key={handle} onClick={() => setWfHandle(handle)}
-                  className="text-xs font-mono px-2.5 py-1 bg-muted/40 border border-border rounded text-muted-foreground hover:text-primary hover:border-primary/25 transition-colors">
-                  {handle}
-                </button>
-              ))}
+      {/* Actor Fetch */}
+      {tab === 'actor' && (
+        <div className="space-y-4">
+          <div className="bg-card border border-border rounded-xl p-4">
+            <div className="text-xs font-semibold text-foreground mb-3">Actor API Fetcher · AP Person / Service</div>
+            <div className="flex gap-2">
+              <input value={actorUrl} onChange={(e) => setActorUrl(e.target.value)}
+                placeholder="https://mastodon.social/users/alice"
+                className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm font-mono text-foreground focus:outline-none focus:border-primary/40" />
+              <button onClick={fetchActor} disabled={actorLoading}
+                className="flex items-center gap-1.5 px-4 py-2 bg-primary text-primary-foreground text-sm font-semibold rounded-lg hover:bg-primary/90 disabled:opacity-50">
+                {actorLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Globe className="w-4 h-4" />}Fetch
+              </button>
+            </div>
+            <p className="text-[11px] text-muted-foreground font-mono mt-2">
+              Fetches an AP actor JSON-LD document, caches account metadata and public key in Supabase
+            </p>
+          </div>
+          {actorResult && (
+            <div className="bg-card border border-border rounded-xl p-4">
+              <div className="text-xs font-semibold text-foreground mb-3">Actor JSON-LD Response</div>
+              <div className="bg-background border border-border rounded-lg p-4 overflow-auto max-h-96">
+                <JsonNode value={actorResult} />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* NodeInfo */}
+      {tab === 'nodeinfo' && (
+        <div className="space-y-4">
+          <div className="bg-card border border-border rounded-xl p-4">
+            <div className="text-xs font-semibold text-foreground mb-3">NodeInfo Fetcher · nodeinfo 2.0 / 2.1</div>
+            <div className="flex gap-2">
+              <input value={nodeDomain} onChange={(e) => setNodeDomain(e.target.value)}
+                placeholder="mastodon.social"
+                className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm font-mono text-foreground focus:outline-none focus:border-primary/40" />
+              <button onClick={fetchNodeInfo} disabled={nodeLoading}
+                className="flex items-center gap-1.5 px-4 py-2 bg-primary text-primary-foreground text-sm font-semibold rounded-lg hover:bg-primary/90 disabled:opacity-50">
+                {nodeLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Key className="w-4 h-4" />}Fetch
+              </button>
+            </div>
+            <p className="text-[11px] text-muted-foreground font-mono mt-2">
+              Fetches /.well-known/nodeinfo then the schema document. Upserts instance info and caches NodeInfo in Supabase
+            </p>
+          </div>
+          {nodeResult && (
+            <div className="bg-card border border-border rounded-xl p-4">
+              <div className="text-xs font-semibold text-foreground mb-3">NodeInfo Response</div>
+              <div className="bg-background border border-border rounded-lg p-4 overflow-auto max-h-96">
+                <JsonNode value={nodeResult} />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Raw Inspector */}
+      {tab === 'raw' && (
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[11px] font-mono text-muted-foreground uppercase tracking-wider">Raw JSON Input</span>
+              <button onClick={handleCopy} className="flex items-center gap-1 text-[10px] font-mono text-muted-foreground hover:text-foreground">
+                {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                {copied ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+            <textarea value={rawInput} onChange={(e) => handleRawChange(e.target.value)} rows={30}
+              placeholder="Paste any AP payload here…"
+              spellCheck={false}
+              className="w-full px-3 py-2.5 bg-background border border-border rounded-lg text-xs font-mono text-foreground focus:outline-none focus:border-primary/40 resize-none" />
+          </div>
+          <div>
+            <div className="text-[11px] font-mono text-muted-foreground uppercase tracking-wider mb-2">Interactive Tree View</div>
+            <div className="bg-background border border-border rounded-lg p-4 overflow-auto h-[calc(100%-2rem)] leading-loose">
+              {parsed
+                ? <JsonNode value={parsed} />
+                : <span className="text-red-400 text-xs font-mono">{parseError ?? 'Enter JSON to inspect'}</span>}
             </div>
           </div>
         </div>
