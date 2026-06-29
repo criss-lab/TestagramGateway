@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { RefreshCw, ExternalLink, Plus, Send, Trash2, RotateCcw, ChevronDown } from 'lucide-react';
+import { RefreshCw, ExternalLink, Plus, Send, Trash2, RotateCcw, ChevronDown, AlertTriangle } from 'lucide-react';
 import StatusBadge from '@/components/features/StatusBadge';
 import { useDeliveryQueue } from '@/hooks/useDeliveryQueue';
 import { useActivityLogs } from '@/hooks/useActivityLogs';
@@ -28,6 +28,7 @@ export default function ExportQueue() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [bulkRetrying, setBulkRetrying] = useState(false);
   const queryClient = useQueryClient();
   const { data: allItems } = useDeliveryQueue('all');
   const { data: items, isLoading } = useDeliveryQueue(filter);
@@ -40,39 +41,33 @@ export default function ExportQueue() {
 
   const counts = {
     all:       allItems?.length ?? 0,
-    pending:   allItems?.filter((i) => i.status === 'pending').length ?? 0,
-    delivered: allItems?.filter((i) => i.status === 'delivered').length ?? 0,
-    failed:    allItems?.filter((i) => i.status === 'failed').length ?? 0,
-    retrying:  allItems?.filter((i) => i.status === 'retrying').length ?? 0,
+    pending:   allItems?.filter(i => i.status === 'pending').length ?? 0,
+    delivered: allItems?.filter(i => i.status === 'delivered').length ?? 0,
+    failed:    allItems?.filter(i => i.status === 'failed').length ?? 0,
+    retrying:  allItems?.filter(i => i.status === 'retrying').length ?? 0,
   };
 
   async function handleAddItem(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
-    const target_domain = form.target_domain || new URL(form.target_inbox).hostname;
+    const target_domain = form.target_domain || (() => { try { return new URL(form.target_inbox).hostname; } catch { return form.target_inbox; } })();
     const activity_data = {
       '@context': 'https://www.w3.org/ns/activitystreams',
       type: form.activity_type,
+      id: `https://testagram.site/activities/${Date.now()}`,
+      actor: 'https://testagram.site/users/me',
       ...(form.activity_type === 'Create' ? { object: { type: 'Note', content: form.content } } : {}),
     };
-
     const { error } = await supabase.from('delivery_queue').insert({
-      activity_type: form.activity_type,
-      activity_data,
-      target_inbox: form.target_inbox,
-      target_domain,
-      status: 'pending',
-      attempts: 0,
-      max_attempts: parseInt(form.max_attempts),
+      activity_type: form.activity_type, activity_data,
+      target_inbox: form.target_inbox, target_domain,
+      status: 'pending', attempts: 0, max_attempts: parseInt(form.max_attempts),
     });
-
     if (error) { toast.error(error.message); setSaving(false); return; }
-
     await supabase.from('activity_logs').insert({
       event_type: 'delivery_queued', module: 'export',
       description: `Queued ${form.activity_type} activity for ${target_domain}`, status: 'success',
     });
-
     toast.success(`${form.activity_type} activity queued for ${target_domain}.`);
     queryClient.invalidateQueries({ queryKey: ['delivery_queue'] });
     queryClient.invalidateQueries({ queryKey: ['activity_logs'] });
@@ -95,6 +90,25 @@ export default function ExportQueue() {
     queryClient.invalidateQueries({ queryKey: ['activity_logs'] });
   }
 
+  async function handleBulkRetry() {
+    const failedItems = allItems?.filter(i => i.status === 'failed' || i.status === 'retrying') ?? [];
+    if (!failedItems.length) { toast.info('No failed items to retry.'); return; }
+    if (!confirm(`Reset ${failedItems.length} failed/retrying item(s) to pending?`)) return;
+    setBulkRetrying(true);
+    const { error } = await supabase.from('delivery_queue')
+      .update({ status: 'pending', attempts: 0, last_error: null, scheduled_at: new Date().toISOString() })
+      .in('status', ['failed', 'retrying']);
+    if (error) { toast.error(error.message); setBulkRetrying(false); return; }
+    await supabase.from('activity_logs').insert({
+      event_type: 'bulk_retry', module: 'export',
+      description: `Bulk retry triggered: ${failedItems.length} items reset to pending`, status: 'warning',
+    });
+    toast.success(`${failedItems.length} items reset to pending.`);
+    queryClient.invalidateQueries({ queryKey: ['delivery_queue'] });
+    queryClient.invalidateQueries({ queryKey: ['activity_logs'] });
+    setBulkRetrying(false);
+  }
+
   async function handleDelete(id: string) {
     if (!confirm('Remove this item from the delivery queue?')) return;
     const { error } = await supabase.from('delivery_queue').delete().eq('id', id);
@@ -107,18 +121,40 @@ export default function ExportQueue() {
     <div className="max-w-6xl space-y-4">
       {/* Stats bar */}
       <div className="grid grid-cols-4 gap-3">
-        {(['pending', 'delivered', 'failed', 'retrying'] as const).map((s) => (
-          <div key={s} className="bg-card border border-border rounded-lg px-4 py-3 flex items-center justify-between">
+        {(['pending', 'delivered', 'failed', 'retrying'] as const).map(s => (
+          <div key={s} className={cn('bg-card border rounded-lg px-4 py-3 flex items-center justify-between',
+            s === 'failed' && counts.failed > 0 ? 'border-red-400/25' : 'border-border')}>
             <span className="text-xs text-muted-foreground capitalize">{s}</span>
-            <span className="text-lg font-bold font-mono text-foreground">{formatNumber(counts[s])}</span>
+            <span className={cn('text-lg font-bold font-mono',
+              s === 'failed' && counts.failed > 0 ? 'text-red-300' : 'text-foreground')}>
+              {formatNumber(counts[s])}
+            </span>
           </div>
         ))}
       </div>
 
+      {/* Failed banner */}
+      {counts.failed > 0 && (
+        <div className="flex items-center gap-3 px-4 py-3 bg-red-400/6 border border-red-400/20 rounded-lg">
+          <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0" />
+          <p className="text-sm text-red-300 flex-1">
+            {counts.failed} deliveries failed — {counts.retrying} are retrying.
+          </p>
+          <button
+            onClick={handleBulkRetry}
+            disabled={bulkRetrying}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-red-400/15 border border-red-400/25 text-red-400 text-xs rounded-md hover:bg-red-400/25 transition-colors font-semibold disabled:opacity-50 flex-shrink-0"
+          >
+            {bulkRetrying ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
+            {bulkRetrying ? 'Retrying…' : `Retry All Failed (${counts.failed + counts.retrying})`}
+          </button>
+        </div>
+      )}
+
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-1 flex-wrap">
-          {FILTERS.map((f) => (
+          {FILTERS.map(f => (
             <button key={f} onClick={() => setFilter(f)}
               className={cn('px-3 py-1.5 rounded-md text-xs font-mono font-medium transition-all border',
                 filter === f ? 'bg-primary/10 text-primary border-primary/25' : 'text-muted-foreground border-border hover:text-foreground hover:bg-muted/60')}>
@@ -126,10 +162,9 @@ export default function ExportQueue() {
             </button>
           ))}
         </div>
-        <button onClick={() => setShowAddForm((p) => !p)}
+        <button onClick={() => setShowAddForm(p => !p)}
           className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-emerald-400/10 border border-emerald-400/25 text-emerald-400 text-xs rounded-md hover:bg-emerald-400/20 transition-colors font-medium">
-          <Plus className="w-3.5 h-3.5" />
-          Queue Activity
+          <Plus className="w-3.5 h-3.5" />Queue Activity
         </button>
       </div>
 
@@ -140,34 +175,33 @@ export default function ExportQueue() {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-[11px] text-muted-foreground font-mono mb-1">Activity Type</label>
-              <select value={form.activity_type} onChange={(e) => setForm({ ...form, activity_type: e.target.value })}
+              <select value={form.activity_type} onChange={e => setForm({ ...form, activity_type: e.target.value })}
                 className="w-full px-3 py-1.5 bg-background border border-border rounded text-sm text-foreground focus:outline-none focus:border-emerald-400/40 font-mono">
-                {ACTIVITY_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                {ACTIVITY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
             <div>
               <label className="block text-[11px] text-muted-foreground font-mono mb-1">Max Attempts</label>
-              <input type="number" min="1" max="10" value={form.max_attempts}
-                onChange={(e) => setForm({ ...form, max_attempts: e.target.value })}
+              <input type="number" min="1" max="10" value={form.max_attempts} onChange={e => setForm({ ...form, max_attempts: e.target.value })}
                 className="w-full px-3 py-1.5 bg-background border border-border rounded text-sm text-foreground focus:outline-none focus:border-emerald-400/40 font-mono" />
             </div>
             <div>
               <label className="block text-[11px] text-muted-foreground font-mono mb-1">Target Inbox URL *</label>
-              <input required value={form.target_inbox} onChange={(e) => setForm({ ...form, target_inbox: e.target.value })}
+              <input required value={form.target_inbox} onChange={e => setForm({ ...form, target_inbox: e.target.value })}
                 placeholder="https://mastodon.social/inbox"
                 className="w-full px-3 py-1.5 bg-background border border-border rounded text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-emerald-400/40 font-mono" />
             </div>
             <div>
-              <label className="block text-[11px] text-muted-foreground font-mono mb-1">Target Domain (auto-detected)</label>
-              <input value={form.target_domain} onChange={(e) => setForm({ ...form, target_domain: e.target.value })}
+              <label className="block text-[11px] text-muted-foreground font-mono mb-1">Target Domain</label>
+              <input value={form.target_domain} onChange={e => setForm({ ...form, target_domain: e.target.value })}
                 placeholder="mastodon.social"
                 className="w-full px-3 py-1.5 bg-background border border-border rounded text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-emerald-400/40 font-mono" />
             </div>
             {form.activity_type === 'Create' && (
               <div className="col-span-2">
                 <label className="block text-[11px] text-muted-foreground font-mono mb-1">Note Content</label>
-                <textarea value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })}
-                  rows={2} placeholder="Post content to publish via ActivityPub…"
+                <textarea value={form.content} onChange={e => setForm({ ...form, content: e.target.value })}
+                  rows={2} placeholder="Post content to publish via ActivityPub from testagram.site…"
                   className="w-full px-3 py-1.5 bg-background border border-border rounded text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-emerald-400/40 font-mono resize-none" />
               </div>
             )}
@@ -205,7 +239,7 @@ export default function ExportQueue() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {items?.map((item) => (
+                {items?.map(item => (
                   <>
                     <tr key={item.id} className="hover:bg-muted/20 transition-colors group">
                       <td className="px-4 py-3">
@@ -229,13 +263,9 @@ export default function ExportQueue() {
                         )}
                       </td>
                       <td className="px-4 py-3"><StatusBadge status={item.status} /></td>
-                      <td className="px-4 py-3 text-center font-mono text-xs text-muted-foreground">
-                        {item.attempts}/{item.max_attempts}
-                      </td>
+                      <td className="px-4 py-3 text-center font-mono text-xs text-muted-foreground">{item.attempts}/{item.max_attempts}</td>
                       <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{timeAgo(item.created_at)}</td>
-                      <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
-                        {item.delivered_at ? timeAgo(item.delivered_at) : '—'}
-                      </td>
+                      <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{item.delivered_at ? timeAgo(item.delivered_at) : '—'}</td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1">
                           <button onClick={() => setExpandedId(expandedId === item.id ? null : item.id)}
@@ -284,7 +314,6 @@ export default function ExportQueue() {
         )}
       </div>
 
-      {/* Export activity logs */}
       <div>
         <h2 className="text-sm font-semibold text-foreground mb-3">Export Activity</h2>
         <ActivityFeed logs={exportLogs ?? []} />

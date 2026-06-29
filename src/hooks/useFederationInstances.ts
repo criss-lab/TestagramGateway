@@ -13,5 +13,10 @@ export function useFederationInstances() {
       if (error) throw error;
       return data as FederationInstance[];
     },
+    // Auto-refresh every 30 seconds
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+    retry: 3,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
   });
 }

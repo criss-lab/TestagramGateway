@@ -11,7 +11,9 @@ import SyncStatus from '@/pages/SyncStatus';
 import FeedTimeline from '@/pages/FeedTimeline';
 import PayloadInspector from '@/pages/PayloadInspector';
 import DeliveryAnalytics from '@/pages/DeliveryAnalytics';
+import XCloneFeed from '@/pages/XCloneFeed';
 import NotFound from '@/pages/NotFound';
+import { useAutoRefresh } from '@/hooks/useAutoRefresh';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -24,31 +26,41 @@ const queryClient = new QueryClient({
   },
 });
 
+function AppInner() {
+  // Background auto-refresh: simulates continuous import + cleanup every 90 seconds
+  useAutoRefresh(90_000);
+
+  return (
+    <BrowserRouter>
+      <div className="flex h-screen bg-background overflow-hidden">
+        <Sidebar />
+        <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+          <TopBar />
+          <main className="flex-1 overflow-y-auto p-6">
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/instances" element={<Instances />} />
+              <Route path="/import" element={<ImportFeed />} />
+              <Route path="/export" element={<ExportQueue />} />
+              <Route path="/sync" element={<SyncStatus />} />
+              <Route path="/timeline" element={<FeedTimeline />} />
+              <Route path="/xclone" element={<XCloneFeed />} />
+              <Route path="/inspector" element={<PayloadInspector />} />
+              <Route path="/analytics" element={<DeliveryAnalytics />} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </main>
+        </div>
+      </div>
+      <Toaster theme="dark" position="bottom-right" />
+    </BrowserRouter>
+  );
+}
+
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <div className="flex h-screen bg-background overflow-hidden">
-          <Sidebar />
-          <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-            <TopBar />
-            <main className="flex-1 overflow-y-auto p-6">
-              <Routes>
-                <Route path="/" element={<Dashboard />} />
-                <Route path="/instances" element={<Instances />} />
-                <Route path="/import" element={<ImportFeed />} />
-                <Route path="/export" element={<ExportQueue />} />
-                <Route path="/sync" element={<SyncStatus />} />
-                <Route path="/timeline" element={<FeedTimeline />} />
-                <Route path="/inspector" element={<PayloadInspector />} />
-                <Route path="/analytics" element={<DeliveryAnalytics />} />
-                <Route path="*" element={<NotFound />} />
-              </Routes>
-            </main>
-          </div>
-        </div>
-        <Toaster theme="dark" position="bottom-right" />
-      </BrowserRouter>
+      <AppInner />
     </QueryClientProvider>
   );
 }

@@ -13,5 +13,7 @@ export function useRemoteAccounts() {
       if (error) throw error;
       return data as RemoteAccount[];
     },
+    refetchInterval: 60_000,
+    staleTime: 30_000,
   });
 }

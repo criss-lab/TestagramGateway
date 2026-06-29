@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import {
-  LayoutDashboard, Globe, ArrowDownCircle, ArrowUpCircle, RefreshCw, Rss,
-  Activity, BarChart2, Code2, Radio,
+  LayoutDashboard, Globe, ArrowDownCircle, ArrowUpCircle, RefreshCw, Radio,
+  Activity, BarChart2, Code2, Rss, Twitter,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useDashboardStats } from '@/hooks/useDashboardStats';
@@ -11,24 +11,25 @@ const navGroups = [
   {
     label: 'Overview',
     items: [
-      { to: '/',          icon: LayoutDashboard, label: 'Dashboard',   end: true  },
-      { to: '/instances', icon: Globe,            label: 'Instances',   end: false },
-      { to: '/timeline',  icon: Radio,            label: 'Timeline',    end: false },
+      { to: '/',          icon: LayoutDashboard, label: 'Dashboard',     end: true  },
+      { to: '/instances', icon: Globe,            label: 'Instances',     end: false },
+      { to: '/timeline',  icon: Radio,            label: 'Timeline',      end: false },
+      { to: '/xclone',    icon: Twitter,          label: 'XClone Feed',   end: false },
     ],
   },
   {
     label: 'Federation',
     items: [
-      { to: '/import',    icon: ArrowDownCircle,  label: 'Import Feed',  end: false },
-      { to: '/export',    icon: ArrowUpCircle,    label: 'Export Queue', end: false },
-      { to: '/sync',      icon: RefreshCw,        label: 'Sync Status',  end: false },
+      { to: '/import',    icon: ArrowDownCircle,  label: 'Import Feed',   end: false },
+      { to: '/export',    icon: ArrowUpCircle,    label: 'Export Queue',  end: false },
+      { to: '/sync',      icon: RefreshCw,        label: 'Sync Status',   end: false },
     ],
   },
   {
     label: 'Developer',
     items: [
-      { to: '/inspector', icon: Code2,    label: 'AP Inspector', end: false },
-      { to: '/analytics', icon: BarChart2, label: 'Analytics',   end: false },
+      { to: '/inspector', icon: Code2,    label: 'AP Inspector',  end: false },
+      { to: '/analytics', icon: BarChart2, label: 'Analytics',    end: false },
     ],
   },
 ];
@@ -44,7 +45,7 @@ export default function Sidebar() {
           <img src={logo} alt="Gateway Logo" className="w-8 h-8 rounded-lg object-cover flex-shrink-0" />
           <div className="min-w-0">
             <div className="text-sm font-semibold text-foreground leading-none">Testagram</div>
-            <div className="text-[11px] text-muted-foreground mt-0.5 font-mono tracking-wide">AP Gateway</div>
+            <div className="text-[11px] text-muted-foreground mt-0.5 font-mono tracking-wide">AP Gateway · .site</div>
           </div>
         </div>
       </div>
@@ -120,11 +121,11 @@ export default function Sidebar() {
       <div className="px-4 py-4 border-t border-border space-y-1.5">
         <div className="flex items-center gap-2">
           <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-          <span className="text-xs text-muted-foreground font-mono">Gateway online</span>
+          <span className="text-xs text-muted-foreground font-mono">Auto-sync active</span>
         </div>
         <div className="flex items-center gap-1.5">
           <Rss className="w-3 h-3 text-muted-foreground/40" />
-          <span className="text-[10px] text-muted-foreground/40 font-mono">v1.0.0 · ActivityPub</span>
+          <span className="text-[10px] text-muted-foreground/40 font-mono">testagram.site · v1.0.0</span>
         </div>
       </div>
     </aside>

@@ -47,7 +47,7 @@ export interface RemotePost {
   reposts_count: number;
   published_at: string | null;
   created_at: string;
-  remote_accounts: Pick<RemoteAccount, 'handle' | 'display_name' | 'avatar_url'> | null;
+  remote_accounts: Pick<RemoteAccount, 'handle' | 'display_name' | 'avatar_url' | 'instance_domain'> | null;
 }
 
 export interface DeliveryQueueItem {
@@ -85,6 +85,23 @@ export interface RemoteFollow {
   created_at: string;
 }
 
+export interface PostInteraction {
+  id: string;
+  user_id: string | null;
+  post_id: string;
+  action: 'like' | 'repost' | 'share' | 'reply';
+  reply_content: string | null;
+  created_at: string;
+}
+
+export interface AccountFollow {
+  id: string;
+  follower_handle: string;
+  remote_account_id: string;
+  status: 'following' | 'unfollowed' | 'pending';
+  created_at: string;
+}
+
 export interface DashboardStats {
   instances: number;
   accounts: number;
@@ -94,7 +111,7 @@ export interface DashboardStats {
   queueFailed: number;
 }
 
-// ActivityPub Actor object shape (for reference / display)
+// ActivityPub types
 export interface APActor {
   '@context': string | string[];
   type: 'Person' | 'Service' | 'Application' | 'Group' | 'Organization';
@@ -110,7 +127,6 @@ export interface APActor {
   publicKey?: { id: string; owner: string; publicKeyPem: string };
 }
 
-// ActivityPub Note (post)
 export interface APNote {
   '@context': string | string[];
   type: 'Note';
@@ -125,7 +141,6 @@ export interface APNote {
   tag?: unknown[];
 }
 
-// ActivityPub Activity wrapper
 export interface APActivity {
   '@context': string | string[];
   type: 'Create' | 'Follow' | 'Like' | 'Announce' | 'Undo' | 'Delete' | 'Accept' | 'Reject';
@@ -135,4 +150,10 @@ export interface APActivity {
   to?: string[];
   cc?: string[];
   published?: string;
+}
+
+export interface WebFingerResult {
+  subject: string;
+  aliases?: string[];
+  links: { rel: string; type?: string; href?: string; template?: string }[];
 }
