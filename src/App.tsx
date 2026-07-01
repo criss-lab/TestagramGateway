@@ -14,6 +14,11 @@ import DeliveryAnalytics from '@/pages/DeliveryAnalytics';
 import XCloneFeed from '@/pages/XCloneFeed';
 import BlockedInstances from '@/pages/BlockedInstances';
 import APSchema from '@/pages/APSchema';
+import ActivityStream from '@/pages/ActivityStream';
+import HttpSigDebugger from '@/pages/HttpSigDebugger';
+import KeyManagement from '@/pages/KeyManagement';
+import NodeInfoBrowser from '@/pages/NodeInfoBrowser';
+import DeliverWorker from '@/pages/DeliverWorker';
 import NotFound from '@/pages/NotFound';
 import { useAutoRefresh } from '@/hooks/useAutoRefresh';
 
@@ -50,6 +55,12 @@ function AppInner() {
               <Route path="/analytics" element={<DeliveryAnalytics />} />
               <Route path="/blocked" element={<BlockedInstances />} />
               <Route path="/schema" element={<APSchema />} />
+              {/* New pages */}
+              <Route path="/activities" element={<ActivityStream />} />
+              <Route path="/http-sig" element={<HttpSigDebugger />} />
+              <Route path="/keys" element={<KeyManagement />} />
+              <Route path="/nodeinfo" element={<NodeInfoBrowser />} />
+              <Route path="/deliver" element={<DeliverWorker />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </main>

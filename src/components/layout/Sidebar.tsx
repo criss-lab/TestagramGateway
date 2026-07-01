@@ -2,6 +2,7 @@ import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, Globe, ArrowDownCircle, ArrowUpCircle, RefreshCw, Radio,
   Activity, BarChart2, Code2, Rss, Twitter, ShieldOff, Database,
+  Key, Shield, Server, Send, Zap, Network,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useDashboardStats } from '@/hooks/useDashboardStats';
@@ -20,20 +21,35 @@ const navGroups = [
   {
     label: 'ActivityPub',
     items: [
-      { to: '/import',    icon: ArrowDownCircle,  label: 'Import Feed',   end: false },
-      { to: '/export',    icon: ArrowUpCircle,    label: 'Export Queue',  end: false },
-      { to: '/sync',      icon: RefreshCw,        label: 'Sync Status',   end: false },
+      { to: '/import',     icon: ArrowDownCircle, label: 'Import Feed',    end: false },
+      { to: '/export',     icon: ArrowUpCircle,   label: 'Export Queue',   end: false },
+      { to: '/sync',       icon: RefreshCw,       label: 'Sync Status',    end: false },
+      { to: '/activities', icon: Activity,        label: 'Activity Stream',end: false },
+      { to: '/deliver',    icon: Send,            label: 'Deliver Worker', end: false },
     ],
   },
   {
     label: 'Developer',
     items: [
-      { to: '/inspector', icon: Code2,    label: 'AP Inspector',   end: false },
-      { to: '/analytics', icon: BarChart2, label: 'Analytics',     end: false },
-      { to: '/blocked',   icon: ShieldOff, label: 'Blocked',       end: false },
-      { to: '/schema',    icon: Database,  label: 'AP Schema',     end: false },
+      { to: '/inspector', icon: Code2,    label: 'AP Inspector',    end: false },
+      { to: '/http-sig',  icon: Shield,   label: 'HTTP Sig Debug',  end: false },
+      { to: '/keys',      icon: Key,      label: 'Key Management',  end: false },
+      { to: '/nodeinfo',  icon: Server,   label: 'NodeInfo Cache',  end: false },
+      { to: '/analytics', icon: BarChart2,label: 'Analytics',       end: false },
+      { to: '/blocked',   icon: ShieldOff,label: 'Blocked',         end: false },
+      { to: '/schema',    icon: Database, label: 'AP Schema',       end: false },
     ],
   },
+];
+
+// Integration links — external repos that share the same backend
+const INTEGRATIONS = [
+  { label: 'XClone',       url: 'https://github.com/criss-lab/XClone',             color: 'bg-blue-400' },
+  { label: 'Gateway',      url: 'https://github.com/criss-lab/TestagramGateway',   color: 'bg-primary' },
+  { label: 'Media',        url: 'https://github.com/criss-lab/TestagramMedia',     color: 'bg-pink-400' },
+  { label: 'Search',       url: 'https://github.com/criss-lab/TestagramSearch',    color: 'bg-cyan-400' },
+  { label: 'Recommend',    url: 'https://github.com/criss-lab/TestagramRecommend', color: 'bg-emerald-400' },
+  { label: 'Moderation',   url: 'https://github.com/crisus-lab/TestagramModeration',color: 'bg-red-400' },
 ];
 
 export default function Sidebar() {
@@ -77,10 +93,14 @@ export default function Sidebar() {
                   {({ isActive }) => (
                     <>
                       <Icon className={cn('w-4 h-4 flex-shrink-0', isActive ? 'text-primary' : 'group-hover:text-foreground')} />
-                      <span className="font-medium flex-1">{label}</span>
+                      <span className="font-medium flex-1 text-sm">{label}</span>
                       {to === '/export' && stats?.queueFailed ? (
                         <span className="text-[10px] font-mono bg-red-400/15 text-red-400 border border-red-400/20 px-1.5 rounded">
                           {stats.queueFailed}
+                        </span>
+                      ) : to === '/deliver' && stats?.queuePending && stats.queuePending > 0 ? (
+                        <span className="text-[10px] font-mono bg-amber-400/15 text-amber-400 border border-amber-400/20 px-1.5 rounded">
+                          {stats.queuePending}
                         </span>
                       ) : isActive ? (
                         <div className="w-1.5 h-1.5 rounded-full bg-primary" />
@@ -92,6 +112,28 @@ export default function Sidebar() {
             </div>
           </div>
         ))}
+
+        {/* Platform integrations */}
+        <div>
+          <div className="text-[10px] uppercase tracking-widest text-muted-foreground/50 px-2 mb-2 font-mono">
+            Integrations
+          </div>
+          <div className="space-y-1 px-2">
+            {INTEGRATIONS.map((intg) => (
+              <a
+                key={intg.label}
+                href={intg.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 py-1 text-muted-foreground hover:text-foreground transition-colors group"
+              >
+                <div className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', intg.color)} />
+                <span className="text-[11px] font-mono flex-1">{intg.label}</span>
+                <Network className="w-3 h-3 opacity-0 group-hover:opacity-50 transition-opacity" />
+              </a>
+            ))}
+          </div>
+        </div>
       </nav>
 
       {/* AP Endpoint indicators */}
@@ -126,9 +168,12 @@ export default function Sidebar() {
           </div>
           <div className="flex items-center justify-between">
             <span className="text-[11px] text-muted-foreground font-mono flex items-center gap-1.5">
-              <Activity className="w-3 h-3" />Queue
+              <Send className="w-3 h-3" />Queue
             </span>
-            <span className="text-[11px] font-mono text-foreground">{stats?.queueTotal ?? '—'}</span>
+            <span className={cn('text-[11px] font-mono', stats?.queueFailed ? 'text-red-400' : 'text-foreground')}>
+              {stats?.queueTotal ?? '—'}
+              {stats?.queueFailed ? ` (${stats.queueFailed} ✗)` : ''}
+            </span>
           </div>
         </div>
       </div>
